@@ -66,6 +66,9 @@ import org.zywx.wbpalmstar.base.BDebug;
 import org.zywx.wbpalmstar.base.BUtility;
 import org.zywx.wbpalmstar.base.ResoureFinder;
 import org.zywx.wbpalmstar.engine.AbsoluteLayout;
+import org.zywx.wbpalmstar.plugin.uexvideo.utils.ConstantUtil;
+
+import static org.zywx.wbpalmstar.plugin.uexvideo.utils.ConstantUtil.MODE_SCALE;
 
 /**
  * TODO
@@ -73,21 +76,20 @@ import org.zywx.wbpalmstar.engine.AbsoluteLayout;
  * 2.添加close  Button
  */
 public class VideoPlayerActivityForViewToWeb extends Activity implements OnPreparedListener,
-        OnClickListener,
-        OnSeekBarChangeListener, OnCompletionListener, OnErrorListener, OnVideoSizeChangedListener,
-        OnBufferingUpdateListener {
+        OnClickListener, OnSeekBarChangeListener, OnCompletionListener, OnErrorListener,
+        OnVideoSizeChangedListener, OnBufferingUpdateListener {
 
     public static final String TAG = "VideoPlayerActivity";
     private final static int ACTION_UPDATE_PASS_TIME = 1;
     private final static int ACTION_HIDE_CONTROLLER = 2;
-    private final static int MODE_FULL_SCEEN = 2;// 全屏
-    private final static int MODE_SCALE = 1;// 正常
-    private final static int STATE_INIT = 0;
+    private final static int WHAT_PLAYER_FAST_SEEK_TO = 3;
+    public final static int STATE_INIT = 0;
     private final static int STATE_PREPARED = 1;
     private final static int STATE_PLAYING = 2;
     private final static int STATE_PAUSE = 3;
     private final static int STATE_STOP = 4;
     private final static int STATE_RELEASED = 5;
+    private final static int STATE_FAST_SECK = 6;
     private final static int CONTROLLERS_HIDE_DURATION = 5000;
     private int curerntState = STATE_INIT;
     private ProgressDialog progressDialog;
@@ -118,7 +120,7 @@ public class VideoPlayerActivityForViewToWeb extends Activity implements OnPrepa
 
     private int passTime;
     private int totalTime;
-    private int displayMode = MODE_SCALE;
+    private int displayMode = ConstantUtil.MODE_SCALE;
     private boolean isUserSeekingBar = false;
     private AlphaAnimation fadeInAnim;
     private AlphaAnimation fadeOutAnim;
@@ -151,21 +153,35 @@ public class VideoPlayerActivityForViewToWeb extends Activity implements OnPrepa
                         m_tvPassTime.setText(formatTime(passTime) + "/" + formatTime(totalTime));
                         m_sbTimeLine.setProgress(passTime);
                     }
-                    if (curerntState == STATE_PLAYING || curerntState == STATE_PAUSE) {
+                    if (isPlayerStarted()) {
                         handler.sendEmptyMessageDelayed(ACTION_UPDATE_PASS_TIME, 1000);
                     }
                     break;
                 case ACTION_HIDE_CONTROLLER:
-                    m_bottomLayer.setVisibility(View.GONE);
-                    m_bottomLayer.setAnimation(fadeOutAnim);
-                    ivClose.setVisibility(View.GONE);
-                    ivClose.setAnimation(fadeOutAnim);
+                    // 播放时才发送隐藏消息
+                    if (curerntState == STATE_PLAYING) {
+                        m_bottomLayer.setVisibility(View.GONE);
+                        m_bottomLayer.setAnimation(fadeOutAnim);
+                        ivClose.setVisibility(View.GONE);
+                        ivClose.setAnimation(fadeOutAnim);
+                    }
+                    break;
+                case WHAT_PLAYER_FAST_SEEK_TO:
+                    playerFastSeekto((MediaPlayerControl) msg.obj, msg.arg1);
                     break;
             }
         }
-
-        ;
     };
+
+    /**
+     * 播放器是否已经开始播放，STATE_PLAYING、STATE_PAUSE、STATE_FAST_SECK都认为已开始播放
+     *
+     * @return
+     */
+    private boolean isPlayerStarted() {
+        return (curerntState == STATE_PLAYING || curerntState == STATE_PAUSE
+                || curerntState == STATE_FAST_SECK);
+    }
 
     private int x_activity = 0;
     private int y_activity = 0;
@@ -290,7 +306,7 @@ public class VideoPlayerActivityForViewToWeb extends Activity implements OnPrepa
                     alertMessage(finder.getString("error_file_does_not_exist"), true);
                 } else {
                     mediaPlayer.setDataSource(descriptor.getFileDescriptor(), descriptor
-                            .getStartOffset(),
+                                    .getStartOffset(),
                             descriptor.getLength());
                 }
             } else {
@@ -318,7 +334,7 @@ public class VideoPlayerActivityForViewToWeb extends Activity implements OnPrepa
         notifyStopMusicPlay();
         //初始尺寸为用户传进来的宽高
         if (forceFullScreen) {
-            setVideoDisplayMode(MODE_FULL_SCEEN);
+            setVideoDisplayMode(ConstantUtil.MODE_FULL_SCEEN);
         } else {
             m_display.getHolder().setFixedSize(w_activity, h_activity);
         }
@@ -356,6 +372,7 @@ public class VideoPlayerActivityForViewToWeb extends Activity implements OnPrepa
     }
 
     private void releaseMediaPlayer() {
+        handler.removeCallbacksAndMessages(null);
         if (mediaPlayer != null) {
             if (mediaPlayer.isPlaying()) {
                 mediaPlayer.stop();
@@ -398,7 +415,7 @@ public class VideoPlayerActivityForViewToWeb extends Activity implements OnPrepa
 
     @Override
     protected void onPause() {
-        if (curerntState == STATE_PLAYING || curerntState == STATE_PAUSE) {
+        if (isPlayerStarted()) {
             lastPlayPostion = mediaPlayer.getCurrentPosition();
         }
         releaseMediaPlayer();
@@ -421,7 +438,6 @@ public class VideoPlayerActivityForViewToWeb extends Activity implements OnPrepa
      * 改变屏幕的尺寸，只是针对最外层，并不会去改surfaceview的尺寸
      */
     private void toogleFullScreen() {
-
         if (scrollWithWeb) {
             AbsoluteLayout.LayoutParams lp = (AbsoluteLayout.LayoutParams) getWindow()
                     .getDecorView().getLayoutParams();
@@ -457,28 +473,36 @@ public class VideoPlayerActivityForViewToWeb extends Activity implements OnPrepa
     }
 
     public void pauseMediaPlayer() {
-        mediaPlayer.pause();
-        curerntState = STATE_PAUSE;
-        m_ivPlayPause.setBackgroundResource(finder.getDrawableId("plugin_video_play_selector"));
-        onPlayerStatusChange(PLAYER_STATUS_PAUSE);
+        if (curerntState != STATE_FAST_SECK) {
+            mediaPlayer.pause();
+            curerntState = STATE_PAUSE;
+            m_ivPlayPause.setBackgroundResource(finder.getDrawableId("plugin_video_play_selector"));
+            onPlayerStatusChange(PLAYER_STATUS_PAUSE);
+        }
     }
 
     public void startMediaPlayer() {
-        if (startTime != 0) {
-            mediaPlayer.seekTo(startTime * 1000);
-            startTime = 0;
-        }
-        mediaPlayer.start();
-        curerntState = STATE_PLAYING;
-        onPlayerStatusChange(PLAYER_STATUS_PLAYING);
-        m_ivPlayPause.setBackgroundResource(finder.getDrawableId("plugin_video_pause_selector"));
-        if (!autoStart) {
+        if (curerntState != STATE_FAST_SECK) {
+            if (startTime != 0) {
+                mediaPlayer.seekTo(startTime * 1000);
+                startTime = 0;
+            }
+            mediaPlayer.start();
+            onPlayerStatusChange(PLAYER_STATUS_PLAYING);
+            m_ivPlayPause.setBackgroundResource(finder.getDrawableId
+                    ("plugin_video_pause_selector"));
+            if (!autoStart) {
+                handler.sendEmptyMessage(ACTION_UPDATE_PASS_TIME);
+            }
+        } else {  /**由快进快退恢复到播放状态*/
             handler.sendEmptyMessage(ACTION_UPDATE_PASS_TIME);
+            handler.removeMessages(WHAT_PLAYER_FAST_SEEK_TO);
         }
+        curerntState = STATE_PLAYING;
     }
 
-    public void showMediaPlayerControler(){
-        if(m_bottomLayer != null){
+    public void showMediaPlayerControler() {
+        if (m_bottomLayer != null) {
             m_bottomLayer.setVisibility(View.VISIBLE);
         }
     }
@@ -489,13 +513,11 @@ public class VideoPlayerActivityForViewToWeb extends Activity implements OnPrepa
             mUexBaseObj.closePlayer(null);
             //this.finish();
         } else if (v == m_ivScreenAdjust) {
-            if (displayMode == MODE_FULL_SCEEN) {
+            if (displayMode == ConstantUtil.MODE_FULL_SCEEN) {
                 setVideoDisplayMode(MODE_SCALE);
             } else {
-                setVideoDisplayMode(MODE_FULL_SCEEN);
+                setVideoDisplayMode(ConstantUtil.MODE_FULL_SCEEN);
             }
-            toogleFullScreen();
-
         } else if (v == m_ivPlayPause) {
             try {
                 switch (curerntState) {
@@ -503,6 +525,7 @@ public class VideoPlayerActivityForViewToWeb extends Activity implements OnPrepa
                         pauseMediaPlayer();
                         break;
                     case STATE_PAUSE:
+                    case STATE_FAST_SECK:
                         startMediaPlayer();
                         break;
                 }
@@ -528,6 +551,35 @@ public class VideoPlayerActivityForViewToWeb extends Activity implements OnPrepa
         return true;
     }
 
+    private void playerFastSeekto(MediaPlayerControl mediaPlayerControl, int fastSeekStep) {
+        handler.removeMessages(WHAT_PLAYER_FAST_SEEK_TO);
+        switch (mediaPlayerControl) {
+            case FASTFORWARD:
+                passTime += fastSeekStep;
+                passTime = (passTime <= totalTime) ? passTime : totalTime;
+                break;
+            case FASTREVERSE:
+                passTime -= fastSeekStep;
+                passTime = (passTime >= 0) ? passTime : 0;
+                break;
+        }
+        mediaPlayer.seekTo(passTime);
+        m_tvPassTime.setText(formatTime(passTime) + "/" + formatTime(totalTime));
+        m_sbTimeLine.setProgress(passTime);
+        Message msg = Message.obtain(handler, WHAT_PLAYER_FAST_SEEK_TO, mediaPlayerControl);
+        msg.arg1 = fastSeekStep;
+        handler.sendMessageDelayed(msg, 500);
+    }
+
+    public void fastSeekAction(MediaPlayerControl mediaPlayerControl, int fastSeekStep) {
+        handler.removeMessages(ACTION_UPDATE_PASS_TIME);
+        if (curerntState != STATE_FAST_SECK) {
+            showMediaPlayerControler();
+            curerntState = STATE_FAST_SECK;
+        }
+        playerFastSeekto(mediaPlayerControl, fastSeekStep);
+    }
+
     @Override
     public void onStartTrackingTouch(SeekBar seekBar) {
         isUserSeekingBar = true;
@@ -536,7 +588,7 @@ public class VideoPlayerActivityForViewToWeb extends Activity implements OnPrepa
 
     @Override
     public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-        if (fromUser && (curerntState == STATE_PLAYING || curerntState == STATE_PAUSE)) {
+        if (fromUser && (isPlayerStarted())) {
             passTime = progress;
             m_tvPassTime.setText(formatTime(passTime) + "/" + formatTime(totalTime));
             seekBar.setProgress(progress);
@@ -545,7 +597,7 @@ public class VideoPlayerActivityForViewToWeb extends Activity implements OnPrepa
 
     @Override
     public void onStopTrackingTouch(SeekBar seekBar) {
-        if (curerntState == STATE_PLAYING || curerntState == STATE_PAUSE) {
+        if (isPlayerStarted()) {
             mediaPlayer.seekTo(seekBar.getProgress());
             isUserSeekingBar = false;
         }
@@ -574,29 +626,32 @@ public class VideoPlayerActivityForViewToWeb extends Activity implements OnPrepa
     }
 
     public void setVideoDisplayMode(int mode) {
-        if (mode == MODE_FULL_SCEEN) { //全屏
-            if (videoHeight != 0 && videoWidth != 0) {
-                // 计算屏幕与视频的缩放比
-                final float widthScaleRate = (float) screenWidth / (float) videoWidth;
-                final LayoutParams lp = m_display.getLayoutParams();
-                lp.height = (int) (widthScaleRate * (float) videoHeight);
-                lp.width = screenWidth;
-                m_display.setLayoutParams(lp);
-                m_display.getHolder().setFixedSize(lp.width, lp.height);
-                displayMode = mode;
-                m_ivScreenAdjust.setBackgroundResource(finder.getDrawableId
-                        ("plugin_video_fullscreen_selector"));
-            }
-        } else {
+        if (displayMode != mode) {
+            int bgResId = 0;
             final LayoutParams lp = m_display.getLayoutParams();
-            lp.height = h_activity;
-            lp.width = w_activity;
+            if (mode == ConstantUtil.MODE_FULL_SCEEN) { //全屏
+                if (videoHeight != 0 && videoWidth != 0) {
+                    // 计算屏幕与视频的缩放比
+                    final float widthScaleRate = (float) screenWidth / (float) videoWidth;
+                    lp.height = (int) (widthScaleRate * (float) videoHeight);
+                    lp.width = screenWidth;
+                    bgResId = finder.getDrawableId("plugin_video_fullscreen_selector");
+                }
+            } else {
+                lp.height = h_activity;
+                lp.width = w_activity;
+                bgResId = finder.getDrawableId("plugin_video_actualsize_selector");
+            }
+            displayMode = mode;
             m_display.setLayoutParams(lp);
             m_display.getHolder().setFixedSize(lp.width, lp.height);
-            displayMode = mode;
-            m_ivScreenAdjust.setBackgroundResource(finder.getDrawableId
-                    ("plugin_video_actualsize_selector"));
+            m_ivScreenAdjust.setBackgroundResource(bgResId);
+            if (!showScaleButton) {
+                m_ivScreenAdjust.setVisibility(View.GONE);
+            }
+            toogleFullScreen();
         }
+        onPlayerScaleChange(displayMode);
     }
 
     @Override
@@ -717,22 +772,29 @@ public class VideoPlayerActivityForViewToWeb extends Activity implements OnPrepa
     public void notifyHideControllers() {
         // 取消之前发送的还未被处理的消息
         handler.removeMessages(ACTION_HIDE_CONTROLLER);
-        // 播放时才发送隐藏消息
-        if (curerntState == STATE_PLAYING) {
-            handler.sendEmptyMessageDelayed(ACTION_HIDE_CONTROLLER, CONTROLLERS_HIDE_DURATION);
-        }
+        handler.sendEmptyMessageDelayed(ACTION_HIDE_CONTROLLER, CONTROLLERS_HIDE_DURATION);
     }
 
     private void onPlayerStatusChange(int status) {
         JSONObject jsonObject = new JSONObject();
         try {
             jsonObject.put("status", status);
-            mUexBaseObj.callBackPluginJs(EUExVideo.F_CALLBACK_ON_PLAYER_STATUS_CHANGE, jsonObject.toString());
+            mUexBaseObj.callBackPluginJs(EUExVideo.F_CALLBACK_ON_PLAYER_STATUS_CHANGE,
+                    jsonObject.toString());
         } catch (JSONException e) {
             Log.i(TAG, e.getMessage());
         }
+    }
 
-
+    private void onPlayerScaleChange(int scale) {
+        JSONObject jsonObject = new JSONObject();
+        try {
+            jsonObject.put(ConstantUtil.DISPLAY_SCALE, scale);
+            mUexBaseObj.callBackPluginJs(EUExVideo.F_CALLBACK_ON_PLAYER_SCALE_CHANGE,
+                    jsonObject.toString());
+        } catch (JSONException e) {
+            Log.i(TAG, e.getMessage());
+        }
     }
 
     private void notifyStopMusicPlay() {

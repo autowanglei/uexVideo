@@ -17,6 +17,7 @@
  */
 package org.zywx.wbpalmstar.plugin.uexvideo;
 
+import org.zywx.wbpalmstar.plugin.uexvideo.utils.ConstantUtil;
 import org.zywx.wbpalmstar.plugin.uexvideo.vo.PlayerControlVO;
 
 /**
@@ -51,14 +52,16 @@ public class VideoAgent {
                 mVideoPlayerActivityForViewToWeb.notifyHideControllers();
                 break;
             case FULLSCREEN:
+                mVideoPlayerActivityForViewToWeb.setVideoDisplayMode(ConstantUtil.MODE_FULL_SCEEN);
                 break;
             case EXITFULLSCREEN:
+                mVideoPlayerActivityForViewToWeb.setVideoDisplayMode(ConstantUtil.MODE_SCALE);
                 break;
             case FASTFORWARD:
-                break;
             case FASTREVERSE:
+                mVideoPlayerActivityForViewToWeb.fastSeekAction(mediaPlayerControl,
+                        playerControlVO.fastSeekStep);
                 break;
         }
-
     }
 }
